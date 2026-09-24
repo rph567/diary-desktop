@@ -5,6 +5,7 @@ import { formatDateLong, localDateKey } from './date-utils'
 import type { DiaryApi, DiaryData } from './types'
 
 const today = localDateKey()
+const emptyData: DiaryData = { version: 1, entries: [], todos: [] }
 const sampleData: DiaryData = {
   version: 1,
   entries: [
@@ -60,6 +61,20 @@ describe('日记本桌面界面', () => {
     expect(await screen.findByDisplayValue('今天完成了一件重要的事。')).toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: '日记标题' })).not.toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: '日记正文' })).toBeInTheDocument()
+  })
+
+  it('空日记状态和竖排标语保留清晰的版式结构', async () => {
+    api.load = vi.fn().mockResolvedValue(emptyData)
+    const { container } = render(<App />)
+
+    expect(await screen.findByText('这一天还没有日记。可以写下今天发生的事，也可以留一段空白。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '开始写日记' })).toBeInTheDocument()
+    expect(container.querySelector('.editor-empty')).toBeInTheDocument()
+    expect(container.querySelector('.empty-seal')).toHaveTextContent('日')
+
+    const quote = screen.getByLabelText('认真干好一件事')
+    expect(quote.querySelector('.quote-cap')).toHaveTextContent('静')
+    expect(quote.querySelector('.quote-text')).toHaveTextContent('认真干好一件事')
   })
 
   it('点击日历日期后可以直接添加待办', async () => {
