@@ -1,66 +1,209 @@
-const calendarDays = [
-  '', '', 1, 2, 3, 4, 5,
-  6, 7, 8, 9, 10, 11, 12,
-  13, 14, 15, 16, 17, 18, 19,
-  20, 21, 22, 23, 24, 25, 26,
-  27, 28, 29, 30, '', '', '',
-]
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  dateKeyFromParts,
+  formatDateLabel,
+  formatDateLong,
+  getMonthGrid,
+  localDateKey,
+  monthTitle,
+  shiftMonth,
+} from '../date-utils'
+import type { DiaryData, DiaryEntry, SaveStatus } from '../types'
 
-const diaryEntries = [
-  {
-    date: '9月24日',
-    weekday: '星期四',
-    title: '雨停之后',
-    preview: '傍晚的风里有一点桂花味，回家的路上绕了远路。',
-    active: true,
-  },
-  {
-    date: '9月21日',
-    weekday: '星期一',
-    title: '安静地完成了一件事',
-    preview: '没有想象的困难，真正开始之后，事情就简单了。',
-    active: false,
-  },
-  {
-    date: '9月18日',
-    weekday: '星期五',
-    title: '最近的小事',
-    preview: '整理书架、给植物浇水，还有一杯刚刚好的咖啡。',
-    active: false,
-  },
-  {
-    date: '9月12日',
-    weekday: '星期六',
-    title: '周末散步',
-    preview: '河边人不多，天色慢慢暗下来。',
-    active: false,
-  },
-  {
-    date: '9月5日',
-    weekday: '星期六',
-    title: '九月计划',
-    preview: '少做一些计划，多留一点空白。',
-    active: false,
-  },
-]
+const weekdays = ['一', '二', '三', '四', '五', '六', '日']
+const emptyData: DiaryData = { version: 1, entries: [], todos: [] }
 
-const diaryContent = `今天的雨断断续续，直到傍晚才停。
-
-出门时空气很轻，路边的桂花已经开了。没有急着回家，沿着河边慢慢走了一圈。
-
-最近总觉得需要给生活留一点空白，不必把每个时间段都安排得很满。`
+function sortEntries(entries: DiaryEntry[]) {
+  return [...entries].sort((left, right) => {
+    const dateOrder = right.entryDate.localeCompare(left.entryDate)
+    return dateOrder !== 0 ? dateOrder : right.createdAt.localeCompare(left.createdAt)
+  })
+}
 
 export function DiaryPage() {
+  const today = localDateKey()
+  const now = new Date()
+  const [monthView, setMonthView] = useState({ year: now.getFullYear(), month: now.getMonth() })
+  const [data, setData] = useState<DiaryData>(emptyData)
+  const [selectedDate, setSelectedDate] = useState(today)
+  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null)
+  const [content, setContent] = useState('')
+  const [search, setSearch] = useState('')
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
+  const [loadError, setLoadError] = useState('')
+  const draftRef = useRef<{ id: string | null; content: string }>({ id: null, content: '' })
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const selectedEntry = data.entries.find((entry) => entry.id === selectedEntryId) ?? null
+  const calendarDays = useMemo(
+    () => getMonthGrid(monthView.year, monthView.month),
+    [monthView],
+  )
+  const entriesForDate = useMemo(
+    () => sortEntries(data.entries.filter((entry) => entry.entryDate === selectedDate)),
+    [data.entries, selectedDate],
+  )
+  const visibleEntries = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase('zh-CN')
+    if (!query) return entriesForDate
+
+    return sortEntries(data.entries).filter((entry) => {
+      const dateLabel = formatDateLong(entry.entryDate)
+      return entry.content.toLocaleLowerCase('zh-CN').includes(query)
+        || dateLabel.toLocaleLowerCase('zh-CN').includes(query)
+    })
+  }, [data.entries, entriesForDate, search])
+
+  async function persistDraft() {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
+
+    const draft = draftRef.current
+    if (!draft.id) return
+
+    const current = data.entries.find((entry) => entry.id === draft.id)
+    if (current && current.content === draft.content) {
+      setSaveStatus('saved')
+      return
+    }
+
+    setSaveStatus('saving')
+    try {
+      const nextData = await window.diaryAPI.updateEntry(draft.id, { content: draft.content })
+      setData(nextData)
+      setSaveStatus('saved')
+    } catch {
+      setSaveStatus('error')
+    }
+  }
+
+  useEffect(() => {
+    let active = true
+
+    window.diaryAPI.load()
+      .then((loadedData) => {
+        if (!active) return
+        const sorted = sortEntries(loadedData.entries)
+        setData({ ...loadedData, entries: sorted })
+        const initialEntry = sorted.find((entry) => entry.entryDate === today) ?? sorted[0] ?? null
+
+        if (initialEntry) {
+          setSelectedDate(initialEntry.entryDate)
+          setSelectedEntryId(initialEntry.id)
+          setContent(initialEntry.content)
+          draftRef.current = { id: initialEntry.id, content: initialEntry.content }
+          setSaveStatus('saved')
+        }
+      })
+      .catch(() => setLoadError('日记数据加载失败，请重新启动程序。'))
+
+    return () => {
+      active = false
+      if (saveTimer.current) clearTimeout(saveTimer.current)
+      const draft = draftRef.current
+      if (draft.id) {
+        void window.diaryAPI.updateEntry(draft.id, { content: draft.content })
+      }
+    }
+  }, [today])
+
+  async function selectEntry(entry: DiaryEntry) {
+    await persistDraft()
+    setSelectedDate(entry.entryDate)
+    setSelectedEntryId(entry.id)
+    setContent(entry.content)
+    draftRef.current = { id: entry.id, content: entry.content }
+    setSaveStatus('saved')
+  }
+
+  async function selectDate(value: string) {
+    await persistDraft()
+    setSelectedDate(value)
+    const firstEntry = sortEntries(data.entries.filter((entry) => entry.entryDate === value))[0]
+
+    if (firstEntry) {
+      setSelectedEntryId(firstEntry.id)
+      setContent(firstEntry.content)
+      draftRef.current = { id: firstEntry.id, content: firstEntry.content }
+      setSaveStatus('saved')
+    } else {
+      setSelectedEntryId(null)
+      setContent('')
+      draftRef.current = { id: null, content: '' }
+      setSaveStatus('idle')
+    }
+  }
+
+  async function createEntry() {
+    await persistDraft()
+    try {
+      const nextData = await window.diaryAPI.createEntry({ entryDate: selectedDate, content: '' })
+      const created = sortEntries(nextData.entries).find(
+        (entry) => entry.entryDate === selectedDate && !data.entries.some((old) => old.id === entry.id),
+      )
+
+      setData(nextData)
+      if (created) {
+        setSelectedEntryId(created.id)
+        setContent('')
+        draftRef.current = { id: created.id, content: '' }
+        setSaveStatus('saved')
+      }
+    } catch {
+      setSaveStatus('error')
+    }
+  }
+
+  async function deleteEntry() {
+    if (!selectedEntry || !window.confirm('确定删除这篇日记吗？删除后无法恢复。')) return
+
+    try {
+      const nextData = await window.diaryAPI.deleteEntry(selectedEntry.id)
+      setData(nextData)
+      setSelectedEntryId(null)
+      setContent('')
+      draftRef.current = { id: null, content: '' }
+      setSaveStatus('idle')
+    } catch {
+      setSaveStatus('error')
+    }
+  }
+
+  function handleContentChange(value: string) {
+    if (!selectedEntryId) return
+
+    setContent(value)
+    setSaveStatus('saving')
+    draftRef.current = { id: selectedEntryId, content: value }
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => {
+      void persistDraft()
+    }, 600)
+  }
+
+  async function changeMonth(offset: number) {
+    setMonthView((current) => shiftMonth(current.year, current.month, offset))
+  }
+
+  const saveLabel = {
+    idle: '等待输入',
+    saving: '保存中…',
+    saved: '已保存',
+    error: '保存失败',
+  }[saveStatus]
+
   return (
     <section className="page diary-page" aria-labelledby="diary-title">
       <header className="page-header">
         <div>
           <p className="eyebrow">私人空间</p>
-          <h1 id="diary-title">最近日记</h1>
+          <h1 id="diary-title">我的日记</h1>
         </div>
         <div className="page-actions">
-          <span className="demo-badge">界面预览</span>
-          <button className="primary-button" type="button">
+          {loadError && <span className="error-badge">{loadError}</span>}
+          <button className="primary-button" type="button" onClick={() => void createEntry()}>
             <span aria-hidden="true">+</span>
             新建日记
           </button>
@@ -72,11 +215,8 @@ export function DiaryPage() {
           <div className="browser-heading">
             <div>
               <span className="section-kicker">日记归档</span>
-              <strong>9 篇记录</strong>
+              <strong>{data.entries.length} 篇记录</strong>
             </div>
-            <button className="icon-button" type="button" aria-label="更多操作">
-              <span aria-hidden="true">•••</span>
-            </button>
           </div>
 
           <label className="search-box">
@@ -84,96 +224,124 @@ export function DiaryPage() {
               <circle cx="11" cy="11" r="6.5" />
               <path d="m16 16 4 4" />
             </svg>
-            <input type="search" placeholder="搜索标题或正文" aria-label="搜索日记" />
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="搜索日记正文"
+              aria-label="搜索日记"
+            />
           </label>
 
           <section className="mini-calendar" aria-label="日记日期筛选">
             <div className="calendar-heading">
-              <button type="button" aria-label="上个月">‹</button>
-              <strong>2026年9月</strong>
-              <button type="button" aria-label="下个月">›</button>
+              <button type="button" aria-label="上个月" onClick={() => void changeMonth(-1)}>‹</button>
+              <strong>{monthTitle(monthView.year, monthView.month)}</strong>
+              <button type="button" aria-label="下个月" onClick={() => void changeMonth(1)}>›</button>
             </div>
             <div className="calendar-weekdays" aria-hidden="true">
-              <span>一</span><span>二</span><span>三</span><span>四</span>
-              <span>五</span><span>六</span><span>日</span>
+              {weekdays.map((weekday) => <span key={weekday}>{weekday}</span>)}
             </div>
             <div className="calendar-grid">
-              {calendarDays.map((day, index) => (
-                <span
-                  className={[
-                    'calendar-day',
-                    day === 24 ? 'is-selected' : '',
-                    typeof day === 'number' && [5, 12, 18, 21, 24].includes(day) ? 'has-entry' : '',
-                  ].filter(Boolean).join(' ')}
-                  key={`${day}-${index}`}
-                >
-                  {day}
-                </span>
-              ))}
+              {calendarDays.map((day, index) => {
+                if (!day) return <span className="calendar-empty" key={`empty-${index}`} />
+                const dateKey = dateKeyFromParts(monthView.year, monthView.month, day)
+                const classNames = [
+                  'calendar-day',
+                  dateKey === selectedDate ? 'is-selected' : '',
+                  data.entries.some((entry) => entry.entryDate === dateKey) ? 'has-entry' : '',
+                ].filter(Boolean).join(' ')
+
+                return (
+                  <button
+                    className={classNames}
+                    type="button"
+                    aria-label={formatDateLong(dateKey)}
+                    onClick={() => void selectDate(dateKey)}
+                    key={dateKey}
+                  >
+                    {day}
+                  </button>
+                )
+              })}
             </div>
           </section>
 
           <div className="entry-list" aria-label="日记列表">
-            {diaryEntries.map((entry) => (
+            {visibleEntries.length === 0 ? (
+              <div className="list-empty">
+                <span>{search ? '没有匹配的日记' : '这一天还没有记录'}</span>
+                {!search && <button type="button" onClick={() => void createEntry()}>写一篇</button>}
+              </div>
+            ) : visibleEntries.map((entry) => (
               <button
-                className={`entry-card${entry.active ? ' is-active' : ''}`}
+                className={`entry-card${entry.id === selectedEntryId ? ' is-active' : ''}`}
                 type="button"
-                key={entry.date + entry.title}
+                onClick={() => void selectEntry(entry)}
+                key={entry.id}
               >
                 <span className="entry-date">
-                  <strong>{entry.date}</strong>
-                  <span>{entry.weekday}</span>
+                  <strong>{formatDateLabel(entry.entryDate)}</strong>
+                  <span>{entry.content.trim() ? '已记录' : '空白日记'}</span>
                 </span>
-                <strong className="entry-title">{entry.title}</strong>
-                <span className="entry-preview">{entry.preview}</span>
+                <span className="entry-preview">
+                  {entry.content.trim() || '还没有写下内容，点击开始记录。'}
+                </span>
               </button>
             ))}
           </div>
         </aside>
 
         <article className="panel editor-panel">
-          <div className="editor-toolbar">
-            <div className="editor-date">
-              <span className="status-dot" />
-              2026年9月24日 · 星期四
-            </div>
-            <div className="editor-tools" aria-label="编辑器工具栏">
-              <button type="button" aria-label="加粗"><strong>B</strong></button>
-              <button type="button" aria-label="斜体"><em>I</em></button>
-              <button type="button" aria-label="插入分隔线">—</button>
-              <span className="toolbar-divider" />
-              <button type="button" aria-label="更多格式">Aa</button>
-            </div>
-          </div>
+          {selectedEntry ? (
+            <>
+              <div className="editor-toolbar">
+                <div className="editor-date">
+                  <span className="status-dot" />
+                  {formatDateLong(selectedEntry.entryDate)}
+                </div>
+                <div className="editor-actions">
+                  <span className={`save-state is-${saveStatus}`}>{saveLabel}</span>
+                  <button className="danger-button" type="button" onClick={() => void deleteEntry()}>
+                    删除
+                  </button>
+                </div>
+              </div>
 
-          <div className="editor-paper">
-            <input
-              className="editor-title"
-              type="text"
-              defaultValue="雨停之后"
-              aria-label="日记标题"
-            />
-            <div className="editor-meta">
-              <span>最后编辑于 21:42</span>
-              <span className="saved-state">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="m6.5 12.4 3.4 3.4 7.6-8" />
-                </svg>
-                已保存
-              </span>
-            </div>
-            <textarea
-              className="editor-content"
-              defaultValue={diaryContent}
-              aria-label="日记正文"
-              spellCheck="false"
-            />
-          </div>
+              <div className="editor-paper editor-paper-text-only">
+                <textarea
+                  className="editor-content editor-content-focus"
+                  value={content}
+                  onChange={(event) => handleContentChange(event.target.value)}
+                  onBlur={() => void persistDraft()}
+                  onKeyDown={(event) => {
+                    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+                      event.preventDefault()
+                      void persistDraft()
+                    }
+                  }}
+                  aria-label="日记正文"
+                  placeholder="写下今天发生的事……"
+                  spellCheck="false"
+                  autoFocus
+                />
+              </div>
 
-          <footer className="editor-footer">
-            <span>示例内容</span>
-            <span>纯文本模式</span>
-          </footer>
+              <footer className="editor-footer">
+                <span>{content.length} 字</span>
+                <span>内容只保存在本机</span>
+              </footer>
+            </>
+          ) : (
+            <div className="editor-empty">
+              <span className="empty-seal">日</span>
+              <h2>{formatDateLong(selectedDate)}</h2>
+              <p>这一天还没有日记。可以写下今天发生的事，也可以留一段空白。</p>
+              <button className="primary-button" type="button" onClick={() => void createEntry()}>
+                开始写日记
+              </button>
+            </div>
+          )}
         </article>
       </div>
     </section>

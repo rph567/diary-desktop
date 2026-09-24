@@ -7,11 +7,7 @@ type AppShellProps = {
   children: ReactNode
 }
 
-const navigation: Array<{
-  id: AppPage
-  label: string
-  icon: ReactNode
-}> = [
+const navigation: Array<{ id: AppPage; label: string; icon: ReactNode }> = [
   {
     id: 'diary',
     label: '日记',
@@ -58,8 +54,14 @@ export function AppShell({ activePage, onNavigate, children }: AppShellProps) {
           ))}
         </nav>
 
+        <div className="rail-quote" aria-label="认真干好一件事">
+          <span className="quote-cap">静</span>
+          <span className="quote-text">认真干好一件事</span>
+          <span className="quote-line" />
+        </div>
+
         <div className="rail-footer">
-          <div className="local-badge" title="数据仅保存在本机">
+          <div className="local-badge" title="数据保存在 D:\76188\日记本\data">
             <span className="status-dot" />
             <span>本地</span>
           </div>
