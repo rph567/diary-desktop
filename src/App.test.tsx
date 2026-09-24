@@ -59,6 +59,7 @@ describe('日记本桌面界面', () => {
     render(<App />)
 
     expect(await screen.findByDisplayValue('今天完成了一件重要的事。')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '萧炎的日记' })).toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: '日记标题' })).not.toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: '日记正文' })).toBeInTheDocument()
   })

@@ -199,7 +199,7 @@ export function DiaryPage() {
       <header className="page-header">
         <div>
           <p className="eyebrow">私人空间</p>
-          <h1 id="diary-title">我的日记</h1>
+          <h1 id="diary-title">萧炎的日记</h1>
         </div>
         <div className="page-actions">
           {loadError && <span className="error-badge">{loadError}</span>}
